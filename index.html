@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xadrez Online - Wi-Fi Local</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+
+        /* Modal do Lobby */
+        #lobby-card {
+            background: #ffffff;
+            padding: 28px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            width: 100%;
+            max-width: 420px;
+            text-align: center;
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+            text-align: left;
+        }
+
+        label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #4a5568;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: #3182ce;
+        }
+
+        .divider {
+            margin: 20px 0;
+            border-bottom: 1px solid #e2e8f0;
+            position: relative;
+        }
+
+        .divider span {
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff;
+            padding: 0 10px;
+            color: #a0aec0;
+            font-size: 0.85rem;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:active { transform: scale(0.98); }
+
+        .btn-primary { background-color: #3182ce; color: white; }
+        .btn-primary:hover { background-color: #2b6cb0; }
+        .btn-secondary { background-color: #38a169; color: white; }
+        .btn-secondary:hover { background-color: #2f855a; }
+
+        /* Área do Jogo */
+        #game-area {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #status {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 14px;
+            color: #2d3748;
+            text-align: center;
+        }
+
+        #room-info {
+            background: #e2e8f0;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
+
+        #board {
+            width: min(90vw, 480px);
+            border: 3px solid #4a5568;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+
+        .highlight-square {
+            background-color: rgba(255, 235, 59, 0.5) !important;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- LOBBY / MENU PRINCIPAL -->
+    <div id="lobby-card">
+        <h2 style="margin-top: 0; color: #2d3748;">Xadrez LAN</h2>
+        
+        <div class="input-group">
+            <label for="playerName">Seu Nome:</label>
+            <input type="text" id="playerName" placeholder="Ex: João" maxlength="15">
+        </div>
+
+        <button id="createRoomBtn" class="btn-primary">Criar Nova Sala</button>
+
+        <div class="divider"><span>OU</span></div>
+
+        <div class="input-group">
+            <label for="roomCodeInput">Código da Sala:</label>
+            <input type="text" id="roomCodeInput" placeholder="Ex: A1B2C3" style="text-transform: uppercase;">
+        </div>
+
+        <button id="joinRoomBtn" class="btn-secondary">Entrar na Sala</button>
+    </div>
+
+    <!-- ÁREA DE JOGO -->
+    <div id="game-area">
+        <div id="room-info">SALA: <span id="displayRoomCode">------</span></div>
+        <div id="status">Aguardando oponente...</div>
+        <div id="board"></div>
+    </div>
+
+    <!-- Dependências -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <!-- O Socket.IO é servido automaticamente pelo Node.js -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+        const socket = io();
+
+        let board = null;
+        let game = new Chess();
+
+        let currentRoomCode = null;
+        let myColor = null; // 'w' ou 'b'
+        let gameActive = false;
+
+        const statusEl = $('#status');
+        const displayRoomCode = $('#displayRoomCode');
+
+        // Ícones SVG customizados das peças
+        function createChessPiece(piece) {
+            const symbols = {
+                wK: "♔", wQ: "♕", wR: "♖", wB: "♗", wN: "♘", wP: "♙",
+                bK: "♚", bQ: "♛", bR: "♜", bB: "♝", bN: "♞", bP: "♟"
+            };
+            const isWhite = piece.charAt(0) === 'w';
+            const fillColor = isWhite ? "#ffffff" : "#202020";
+            const outlineColor = isWhite ? "#202020" : "#f5f5f5";
+            
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+                <text x="50" y="76" text-anchor="middle" font-family="sans-serif" font-size="78"
+                      fill="${fillColor}" stroke="${outlineColor}" stroke-width="${isWhite ? '1.8' : '0.8'}" paint-order="stroke">
+                      ${symbols[piece]}
+                </text>
+            </svg>`;
+            return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+        }
+
+        function removeHighlights() {
+            $('#board .square-55d63').removeClass('highlight-square');
+        }
+
+        function highlightMove(from, to) {
+            removeHighlights();
+            $('#board .square-' + from).addClass('highlight-square');
+            $('#board .square-' + to).addClass('highlight-square');
+        }
+
+        // --- INTERAÇÕES DO TABULEIRO ---
+        function onDragStart(source, piece) {
+            if (!gameActive) return false;
+            if (game.game_over()) return false;
+
+            // Só permite arrastar peças da própria cor e no próprio turno
+            if (myColor === 'w' && (piece.search(/^b/) !== -1 || game.turn() !== 'w')) return false;
+            if (myColor === 'b' && (piece.search(/^w/) !== -1 || game.turn() !== 'b')) return false;
+        }
+
+        function onDrop(source, target) {
+            // Tenta validar o movimento localmente primeiro
+            const move = game.move({
+                from: source,
+                to: target,
+                promotion: 'q'
+            });
+
+            if (move === null) return 'snapback';
+
+            // Desfaz no cliente temporariamente para esperar a confirmação oficial do servidor
+            game.undo();
+
+            // Envia o lance para o servidor
+            socket.emit('makeMove', {
+                roomCode: currentRoomCode,
+                move: { from: source, to: target, promotion: 'q' }
+            });
+        }
+
+        function onSnapEnd() {
+            board.position(game.fen());
+        }
+
+        // --- EVENTOS DO LOBBY ---
+        $('#createRoomBtn').on('click', () => {
+            const playerName = $('#playerName').val().trim();
+            socket.emit('createRoom', { playerName });
+        });
+
+        $('#joinRoomBtn').on('click', () => {
+            const playerName = $('#playerName').val().trim();
+            const roomCode = $('#roomCodeInput').val().trim();
+
+            if (!roomCode) {
+                alert('Digite o código da sala!');
+                return;
+            }
+            socket.emit('joinRoom', { roomCode, playerName });
+        });
+
+        // --- EVENTOS SOCKET.IO (RESPOSTAS DO SERVIDOR) ---
+        socket.on('roomCreated', ({ roomCode, color }) => {
+            currentRoomCode = roomCode;
+            myColor = color;
+            
+            $('#lobby-card').hide();
+            $('#game-area').css('display', 'flex');
+            displayRoomCode.text(roomCode);
+            statusEl.text("Aguardando oponente entrar...");
+
+            initBoard();
+        });
+
+        socket.on('gameStart', ({ roomCode, white, black, fen }) => {
+            currentRoomCode = roomCode;
+            gameActive = true;
+            game.load(fen);
+
+            $('#lobby-card').hide();
+            $('#game-area').css('display', 'flex');
+            displayRoomCode.text(roomCode);
+
+            if (!board) initBoard();
+
+            // Inverte o tabuleiro se o jogador for de Pretas
+            board.orientation(myColor === 'w' ? 'white' : 'black');
+            board.position(fen);
+
+            updateStatusText(white, black);
+        });
+
+        socket.on('moveMade', ({ fen, lastMove, turn, inCheck, isCheckmate, isDraw }) => {
+            game.load(fen);
+            board.position(fen);
+            highlightMove(lastMove.from, lastMove.to);
+
+            if (isCheckmate) {
+                statusEl.text("Xeque-mate! Fim de jogo.");
+                gameActive = false;
+            } else if (isDraw) {
+                statusEl.text("Empate!");
+                gameActive = false;
+            } else {
+                let statusText = (turn === 'w') ? "Vez das Brancas" : "Vez das Pretas";
+                if (inCheck) statusText += " | XEQUE!";
+                statusEl.text(statusText);
+            }
+        });
+
+        socket.on('errorMessage', (msg) => {
+            alert(msg);
+        });
+
+        socket.on('playerLeft', (msg) => {
+            alert(msg);
+            gameActive = false;
+            statusEl.text("Oponente desconectou.");
+        });
+
+        function updateStatusText(whiteName, blackName) {
+            const turnText = game.turn() === 'w' ? `Vez das Brancas (${whiteName})` : `Vez das Pretas (${blackName})`;
+            statusEl.text(turnText);
+        }
+
+        function initBoard() {
+            board = Chessboard('board', {
+                draggable: true,
+                position: 'start',
+                pieceTheme: createChessPiece,
+                onDragStart: onDragStart,
+                onDrop: onDrop,
+                onSnapEnd: onSnapEnd
+            });
+        }
+
+        $(window).on('resize', () => {
+            if (board) board.resize();
+        });
+    </script>
+</body>
+</html>
